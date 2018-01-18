@@ -20,6 +20,10 @@ def get_branch(body):
     return body[REF].split('/')[-1]
 
 
+def get_git_addr(repos_name, user_name='Romeren'):
+    return 'git@github.com:Romeren/' + repos_name + '.git'
+
+
 def update_repository(repos_name, git_addr):
     info = subprocess.check_output(['ls'])
     items = info.decode('utf-8').split('\n')
@@ -53,8 +57,9 @@ def restart_proccess(process_name):
         kill = ['kill', pid]
         subprocess.check_output(kill)
 
-    print('Starting program', process_name)
-    p = subprocess.Popen(['python', '-m', process_name],
+    cmd = ['python', '-m', process_name]
+    print('Starting program', cmd)
+    p = subprocess.Popen(cmd,
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE,
@@ -81,8 +86,27 @@ def raspboard_handler(body):
 
     print('Deployment done!')
 
+
+def chromecast_handler(body):
+    branch = get_branch(body)
+    if(branch != 'master'):
+        return
+    print('Starting deployment...')
+
+    repos_name = 'chromecast_idlescreen'
+    git_addr = get_git_addr(repos_name)
+    process_name = repos_name + ".main"
+
+    update_repository(repos_name, git_addr)
+
+    restart_proccess(process_name)
+
+    print('Deployment done!')
+
+
 managed_repos = {
-    'Romeren/RaspBoard': raspboard_handler
+    'Romeren/RaspBoard': raspboard_handler,
+    'Romeren/chromecast_idlescreen': chromecast_handler
 }
 
 
@@ -145,6 +169,9 @@ def make_app():
     ])
 
 
+print('STARTED!')
+chromecast_handler({'ref': 'on/master'})
+raspboard_handler({'ref': 'on/master'})
 if __name__ == "__main__":
     app = make_app()
     app.listen(9876)
