@@ -1,10 +1,18 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*- #
+
+from fcntl import F_GETFL
+from fcntl import F_SETFL
+from fcntl import fcntl
+import json
+from os import O_NONBLOCK
+from os import path
+import subprocess
 import tornado.ioloop
 import tornado.web
-import json
-import subprocess
-from fcntl import fcntl, F_GETFL, F_SETFL
-from os import O_NONBLOCK
 
+
+# GIT PAYLOAD FIELDS
 HEAD = 'head_commit'
 HEAD_COMMITTER = 'committer'
 HEAD_COMMIT_MSG = 'message'
@@ -15,13 +23,45 @@ PUSHER = "pusher"
 SENDER = "sender"
 REF = 'ref'
 
+# CONFIG FIELDS:
+CONFIG_REPOSITORY = 'repository'
+CONFIG_REPOS_NAME = 'name'
+CONFIG_REPOS_USER = 'user_name'
+CONFIG_REPOS_BRANCH = 'branch'
+CONFIG_SYSTEMS = 'systems'
+CONFIG_SYS_TYPE = 'type'
+CONFIG_SYS_MAIN = 'main'
+
+
+def get_config(file_name):
+    if(not path.isfile(file_name)):
+        file = open(file_name, 'w+')
+        file.write(json.dumps({}))
+        file.close()
+
+    repos_file = open(file_name, 'r')
+    config = ""
+    try:
+        config = repos_file.read()
+        # print(config)
+        config = config.replace('\n', '')
+        config = config.replace('\t', '')
+        config = config.replace('  ', '')
+        # print(config)
+        config = json.loads(config)
+    except Exception as e:
+        print(e)
+        print('Config file not readable!')
+        exit()
+    return config
+
 
 def get_branch(body):
     return body[REF].split('/')[-1]
 
 
-def get_git_addr(repos_name, user_name='Romeren'):
-    return 'git@github.com:Romeren/' + repos_name + '.git'
+def get_git_addr(repos_name, user_name):
+    return 'git@github.com:' + user_name + '/' + repos_name + '.git'
 
 
 def update_repository(repos_name, git_addr):
@@ -36,7 +76,10 @@ def update_repository(repos_name, git_addr):
     print(info)
 
 
-def restart_proccess(process_name):
+def restart_proccess(process_type, process_name):
+    if(process_type != 'python'):
+        return
+
     p = subprocess.Popen(['ps', '-ax'],
                          stdout=subprocess.PIPE)
     out = subprocess.Popen(['grep', process_name],
@@ -68,46 +111,32 @@ def restart_proccess(process_name):
     fcntl(p.stdout, F_SETFL, flags | O_NONBLOCK)
 
 
-def raspboard_handler(body):
-    branch = get_branch(body)
-    if(branch != 'master'):
+def repository_handler(body, config, force=False):
+    if(CONFIG_REPOSITORY not in config or
+       CONFIG_REPOS_NAME not in config[CONFIG_REPOSITORY] or
+       CONFIG_REPOS_USER not in config[CONFIG_REPOSITORY]):
         return
+
+    if(not force):
+        branch = get_branch(body)
+        if(CONFIG_REPOS_BRANCH in config[CONFIG_REPOSITORY] and
+           branch != config[CONFIG_REPOSITORY][CONFIG_REPOS_BRANCH]):
+            return
+
     print('Starting deployment...')
 
-    repos_name = 'RaspBoard'
-    git_addr = 'git@github.com:Romeren/' + repos_name + '.git'
-    broker_process = repos_name + ".service_framework.component_broker.main"
-    container_process = repos_name + ".main"
+    git_addr = get_git_addr(config[CONFIG_REPOSITORY][CONFIG_REPOS_NAME],
+                            config[CONFIG_REPOSITORY][CONFIG_REPOS_USER])
 
-    update_repository(repos_name, git_addr)
+    update_repository(config[CONFIG_REPOSITORY][CONFIG_REPOS_NAME], git_addr)
 
-    restart_proccess(broker_process)
-    restart_proccess(container_process)
-
-    print('Deployment done!')
-
-
-def chromecast_handler(body):
-    branch = get_branch(body)
-    if(branch != 'master'):
-        return
-    print('Starting deployment...')
-
-    repos_name = 'chromecast_idlescreen'
-    git_addr = get_git_addr(repos_name)
-    process_name = repos_name + ".main"
-
-    update_repository(repos_name, git_addr)
-
-    restart_proccess(process_name)
+    if(CONFIG_SYSTEMS in config):
+        for system in config[CONFIG_SYSTEMS]:
+            if(CONFIG_SYS_TYPE in system and CONFIG_SYS_MAIN in system):
+                restart_proccess(system[CONFIG_SYS_TYPE],
+                                 system[CONFIG_SYS_MAIN])
 
     print('Deployment done!')
-
-
-managed_repos = {
-    'Romeren/RaspBoard': raspboard_handler,
-    'Romeren/chromecast_idlescreen': chromecast_handler
-}
 
 
 class MainHandler(tornado.web.RequestHandler):
@@ -140,7 +169,7 @@ class MainHandler(tornado.web.RequestHandler):
             return
 
         # validate repository
-        if(body[REPOS][REPOS_FULLNAME] not in managed_repos):
+        if(body[REPOS][REPOS_FULLNAME] not in config):
             return
 
         print('-------------------------')
@@ -159,8 +188,7 @@ class MainHandler(tornado.web.RequestHandler):
         # print("HEADERS")
         # print(headers)
         print('-------------------------')
-        handler = managed_repos[body[REPOS][REPOS_FULLNAME]]
-        handler(body)
+        repository_handler(body, config[body[REPOS][REPOS_FULLNAME]])
 
 
 def make_app():
@@ -168,10 +196,16 @@ def make_app():
         (r"/", MainHandler),
     ])
 
+print('Reading config file...')
+repos_config = 'repos.config'
+config = get_config(repos_config)
+print(config)
+print('Initing repositories...')
 
-print('STARTED!')
-chromecast_handler({'ref': 'on/master'})
-raspboard_handler({'ref': 'on/master'})
+for x in config:
+    repository_handler('', config[x], force=True)
+
+print('WebService started!')
 if __name__ == "__main__":
     app = make_app()
     app.listen(9876)
